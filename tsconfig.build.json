@@ -4,8 +4,8 @@
     "noEmit": false,
     "outDir": "dist",
     "declaration": true,
-    "declarationMap": true,
-    "sourceMap": true,
+    "declarationMap": false,
+    "sourceMap": false,
     "allowImportingTsExtensions": true,
     "rewriteRelativeImportExtensions": true,
     "rootDir": "src"

@@ -32,8 +32,9 @@
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json",
     "purity": "bash scripts/purity-check.sh",
-    "purity:test": "BATS_MIN_TESTS=7 bash scripts/run-bats.sh",
-    "ci": "npm run purity && npm run purity:test && npm run typecheck && npm run test && npm run build"
+    "purity:test": "BATS_MIN_TESTS=17 bash scripts/run-bats.sh",
+    "ci": "npm run purity && npm run purity:test && npm run typecheck && npm run test && npm run build && npm run check:fresh",
+    "check:fresh": "bash scripts/check-dist-fresh.sh"
   },
   "peerDependencies": {
     "graphql": "^16",

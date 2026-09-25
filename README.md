@@ -106,9 +106,19 @@ sink の実装は consumer 側の仕事: 追記専用のテーブル (UPDATE/DEL
 
 ```bash
 npm ci
-npm run ci        # purity → prove-red (bats) → typecheck → test → build
-npm run build     # dist/ を出す (dist は commit しない)
+npm run ci        # purity → prove-red (bats) → typecheck → test → build → check:fresh
+npm run build     # dist/ を出す
 ```
+
+**`dist/` は commit する。** consumer は SHA pin で取るので build を持たない
+(gate-kit と同じ型)。鮮度が切れると「直したはずの修正が入っていない package」を
+配る — 使う側からは正常に見える。`npm run check:fresh`
+(`scripts/check-dist-fresh.sh`) が src から一時 outDir に build し直して比較する。
+
+そのため `tsconfig.build.json` は sourceMap / declarationMap を出さない。map は
+outDir からの相対で sources を書くので、別 outDir に出すと絶対パスが混ざって
+byte 一致せず、gate が常時 red になる。加えて公開物の `files` は dist だけなので
+map の sources (`../../src/…`) は同梱されず、consumer 側では dead link になる。
 
 ### 抽出 3 点セット (techne 還元規約)
 
