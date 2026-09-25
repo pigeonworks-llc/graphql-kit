@@ -1,0 +1,56 @@
+{
+  "name": "@pigeonworks-llc/graphql-kit",
+  "version": "0.1.0",
+  "private": true,
+  "description": "GraphQL の入口と断りの型 (HTTP gate / Refused union / 監査ログ plugin)",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "exports": {
+    "./http-gate": {
+      "types": "./dist/http-gate/index.d.ts",
+      "import": "./dist/http-gate/index.js"
+    },
+    "./refusal": {
+      "types": "./dist/refusal/index.d.ts",
+      "import": "./dist/refusal/index.js"
+    },
+    "./audit": {
+      "types": "./dist/audit/index.d.ts",
+      "import": "./dist/audit/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "scripts": {
+    "test": "vitest run src conformance",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "purity": "bash scripts/purity-check.sh",
+    "purity:test": "BATS_MIN_TESTS=7 bash scripts/run-bats.sh",
+    "ci": "npm run purity && npm run purity:test && npm run typecheck && npm run test && npm run build"
+  },
+  "peerDependencies": {
+    "graphql": "^16",
+    "graphql-yoga": "^5"
+  },
+  "peerDependenciesMeta": {
+    "graphql-yoga": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "graphql": "16.14.2",
+    "graphql-yoga": "5.24.1",
+    "typescript": "^5.9.0",
+    "vitest": "^4.1.0"
+  },
+  "license": "Apache-2.0",
+  "author": "合同会社 Pigeonworks (池淵峻一)"
+}

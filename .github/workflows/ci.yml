@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      # prove-red suite (bats) は npm の devDependency では入らないので先に入れる
+      - name: bats を入れる
+        run: sudo npm install -g bats
+      # purity gate → prove-red (bats) → typecheck → test → build の順。
+      # purity が先なのは、製品語彙の混入を最初に落とすため (後段の test が
+      # 通っても package として出せない状態がありうる)。
+      - run: npm run ci
