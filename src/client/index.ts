@@ -124,13 +124,23 @@ export async function graphqlRequest<T>(init: GraphQLRequestInit): Promise<T> {
   const res = await doFetch(endpoint, requestInit);
   await onResponse?.(res);
 
-  const text = await res.text().catch(() => '');
+  // `json()` を先に試す。理由は 2 つ:
+  //   1. `text()` を先に読むと、`json()` しか実装していない fetch double が壊れる
+  //      (実 Response は必ず text() を持つが、差し替えはそうとは限らない)
+  //   2. 本文が JSON でない時 (proxy の HTML エラーページ等) に、素の SyntaxError でなく
+  //      何が返ったかを message に載せられる
+  // 失敗した時点で本体は消費済みなので、先に clone を取っておく。
+  const snapshot = typeof res.clone === 'function' ? res.clone() : null;
   let json: GraphQLResponse<T> | undefined;
   try {
-    json = JSON.parse(text) as GraphQLResponse<T>;
+    json = (await res.json()) as GraphQLResponse<T>;
   } catch {
     json = undefined;
   }
+
+  /** 本文の生 text。clone を持たない差し替えでは空になる (message の detail だけ減る)。 */
+  const bodyText = async (): Promise<string> =>
+    snapshot ? await snapshot.text().catch(() => '') : '';
 
   if (!res.ok) {
     // gate が 400 / 415 を GraphQL の封筒 (errors[]) で返す実装がある。status だけで
@@ -143,6 +153,7 @@ export async function graphqlRequest<T>(init: GraphQLRequestInit): Promise<T> {
         errors,
       });
     }
+    const text = await bodyText();
     throw new GraphQLClientError(
       `GraphQL request failed: HTTP ${res.status}${text ? ` — ${text.slice(0, 200)}` : ''}`,
       { status: res.status },

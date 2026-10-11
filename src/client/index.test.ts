@@ -168,6 +168,35 @@ describe('graphqlRequest', () => {
     ).rejects.toThrow('neither data nor errors');
   });
 
+  it('works with a double that only implements json() (no text/clone)', async () => {
+    // 消費側の test double は Response を完全には実装しないことがある (2026-10-11:
+    // ある製品の同期テストが `{ok, status, json, text}` の object を返しており、
+    // 当初の `text()` 先読みがそれを壊した)。本文の読み取りは json() を第一にする。
+    const fetchImpl: FetchLike = async () => ({ ok: true, status: 200, json: async () => ({ data: { ok: 1 } }) }) as unknown as Response;
+
+    const data = await graphqlRequest<{ ok: number }>({
+      endpoint: 'https://x/graphql',
+      query: '{ ok }',
+      fetchImpl,
+    });
+
+    expect(data).toEqual({ ok: 1 });
+  });
+
+  it('reports a non-JSON body with status when json() fails and clone exists', async () => {
+    const { fetchImpl } = stubFetch(new Response('<html>502</html>', { status: 502 }));
+
+    const err = await graphqlRequest({
+      endpoint: 'https://x/graphql',
+      query: '{ a }',
+      fetchImpl,
+    }).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(GraphQLClientError);
+    expect((err as GraphQLClientError).message).toContain('502');
+    expect((err as GraphQLClientError).message).toContain('<html>');
+  });
+
   it('accepts a service-binding style fetch (Request -> Response)', async () => {
     // Cloudflare の Service Binding は url 文字列でなく Request を受ける。
     // lib は CF を知らないので、consumer がこの形に包んで fetchImpl に渡す。
