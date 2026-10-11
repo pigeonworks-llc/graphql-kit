@@ -1,0 +1,63 @@
+name: Publish
+
+# graphql-kit を GitHub Packages (private npm) に配る。
+#
+# なぜ publish か (ADR 2026-07-13 D3「daemon-kit は GitHub Packages で配布する」):
+# consumer は SHA pin の git 依存で取ってきたが、private repo の git 依存は
+# **CI から install できない**。 plan7 の ci (public runner, ubuntu-latest) が
+# `bun install --frozen-lockfile` で
+#   error: "git clone" for "@pigeonworks-llc/graphql-kit" failed
+# になるのが実測 (plan7 #140 / run 38144838561)。 理由は runner に SSH 鍵も
+# git credential も無いため。 認証の要る registry 経由なら CI に 1 つの口で渡せる。
+#
+# なぜ tag push で発火するか: publish を main への push に連動させると、 main の
+# 全 commit が版になる。 版は consumer が pin する対象なので、 意図した時にだけ
+# 動かす (tag = 版の宣言)。
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # Actions の自動 GITHUB_TOKEN で publish する (PAT を増やさない)。
+  # 同一 repo の package は GITHUB_TOKEN で publish できる。
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: "https://npm.pkg.github.com"
+          cache: npm
+
+      - run: npm ci
+
+      # publish する物が gate を通っていることを publish の直前に確かめる。
+      # 順序が本質: build (dist) → check:fresh (commit 済み dist と一致) を
+      # publish の後ろに置くと「gate に落ちた版が registry に残る」。
+      - name: gate (purity / prove-red / typecheck / test / build / dist fresh)
+        run: |
+          sudo npm install -g bats
+          npm run ci
+
+      - name: tag と package.json の版が一致するか
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$pkg" ]; then
+            echo "::error::tag v$tag と package.json の版 $pkg が違う (版の出所が 2 つあると consumer が pin できない)"
+            exit 1
+          fi
+
+      - name: publish
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,7 +1,6 @@
 {
   "name": "@pigeonworks-llc/graphql-kit",
   "version": "0.1.0",
-  "private": true,
   "description": "GraphQL の入口・断りの型・呼び出し核 (HTTP gate / Refused union / 監査 plugin / client)",
   "type": "module",
   "engines": {
@@ -57,5 +56,12 @@
     "vitest": "^4.1.0"
   },
   "license": "Apache-2.0",
-  "author": "合同会社 Pigeonworks (池淵峻一)"
+  "author": "合同会社 Pigeonworks (池淵峻一)",
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pigeonworks-llc/graphql-kit.git"
+  }
 }
