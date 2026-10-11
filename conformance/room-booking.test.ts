@@ -1,14 +1,20 @@
 // 架空ドメイン (会議室予約) の conformance。実在の製品と無関係な題材で
-// 3 module を組み合わせ、kit が約束している形が通ることを証明する
+// 4 module を組み合わせ、kit が約束している形が通ることを証明する
 // (techne 抽出 3 点セットの 3 点目)。
 //
 // ここで確かめているのは「部品が動く」ことではなく「部品を組み合わせた時に
-// 規約が守られる」こと: 入口で弾く / 断りは payload / 全操作が監査に残る。
+// 規約が守られる」こと: 入口で弾く / 断りは payload / 全操作が監査に残る /
+// client が同じ規約で server を往復する。
 
 import { makeExecutableSchema } from '@graphql-tools/schema';
 import { createYoga } from 'graphql-yoga';
 import { describe, expect, it } from 'vitest';
 import { auditPlugin, createEphemeralAudit, type AuditSink } from '../src/audit/index.ts';
+import {
+  createAuthedGraphQLClient,
+  GraphQLClientError,
+  graphqlRequest,
+} from '../src/client/index.ts';
 import {
   checkOperation,
   decideGraphqlHttpMethod,
@@ -227,5 +233,102 @@ describe('conformance: 会議室予約 (架空ドメイン)', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { data?: { room?: { name?: string } } };
     expect(body.data?.room?.name).toBe('Sakura');
+  });
+});
+
+describe('conformance: client が server の規約と往復する', () => {
+  /** handle を fetch の形に包む。実 network を挟まず同じ Request を通す。 */
+  function handleAsFetch(handle: (req: Request) => Promise<Response>) {
+    return async (input: string, init?: RequestInit): Promise<Response> =>
+      handle(new Request(input, init));
+  }
+
+  it('成功した mutation の payload が client に返る', async () => {
+    const { sink } = createEphemeralAudit();
+    const fetchImpl = handleAsFetch(makeHandler({ sink, actor: 'u-1' }));
+
+    const data = await graphqlRequest<{ bookRoom: { bookingId: string } }>({
+      endpoint: 'http://localhost/graphql',
+      query: 'mutation { bookRoom(roomId: "r-1", hour: 20) { ... on BookingSuccess { bookingId } } }',
+      fetchImpl,
+    });
+
+    expect(data.bookRoom.bookingId).toBe('b-r-1@20');
+  });
+
+  it('入口で弾かれた (415) は status 付きの GraphQLClientError になる', async () => {
+    const { sink } = createEphemeralAudit();
+    const fetchImpl = handleAsFetch(makeHandler({ sink, actor: 'u-1' }));
+
+    const err = await graphqlRequest({
+      endpoint: 'http://localhost/graphql',
+      query: '{ room(id: "r-1") { name } }',
+      // http-gate は text/plain を 415 で弾く。client の既定 header を上書きして踏む
+      headers: { 'Content-Type': 'text/plain' },
+      fetchImpl,
+    }).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(GraphQLClientError);
+    expect((err as GraphQLClientError).status).toBe(415);
+  });
+
+  it('深すぎるクエリは 400 の errors[] として client に届く', async () => {
+    const { sink } = createEphemeralAudit();
+    const fetchImpl = handleAsFetch(makeHandler({ sink, actor: 'u-1' }));
+
+    const err = await graphqlRequest({
+      endpoint: 'http://localhost/graphql',
+      query: '{ a { b { c { d { e { f } } } } } }',
+      fetchImpl,
+    }).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(GraphQLClientError);
+    expect((err as GraphQLClientError).status).toBe(400);
+    expect((err as GraphQLClientError).errors.length).toBeGreaterThan(0);
+  });
+
+  it('断りは errors[] ではないので、client は payload として受け取る', async () => {
+    const { sink } = createEphemeralAudit();
+    const fetchImpl = handleAsFetch(makeHandler({ sink, actor: 'u-1' }));
+    // 同じ枠を 1 度押さえてから、同じ枠を取る
+    await graphqlRequest({
+      endpoint: 'http://localhost/graphql',
+      query: 'mutation { bookRoom(roomId: "r-1", hour: 21) { ... on BookingSuccess { bookingId } } }',
+      fetchImpl,
+    });
+
+    const data = await graphqlRequest<{ bookRoom: { reason: string } }>({
+      endpoint: 'http://localhost/graphql',
+      query:
+        'mutation { bookRoom(roomId: "r-1", hour: 21) { ... on BookingSuccess { bookingId } ... on Refused { reason } } }',
+      fetchImpl,
+    });
+
+    // 断りが throw にならないこと = refusal の規約 (HTTP 200 + payload) が client 側でも保たれる
+    expect(data.bookRoom.reason).toBe('ROOM_TAKEN');
+  });
+
+  it('createAuthedGraphQLClient は token を載せ、未認証は UNAUTHENTICATED で止める', async () => {
+    const { sink, reader } = createEphemeralAudit();
+    const fetchImpl = handleAsFetch(makeHandler({ sink, actor: 'u-1' }));
+
+    const authed = createAuthedGraphQLClient({
+      endpoint: 'http://localhost/graphql',
+      getToken: () => 'jwt-1',
+      fetchImpl,
+    });
+    await authed.request('query Look { room(id: "r-1") { name } }');
+    expect(reader.records()[0]?.operationName).toBe('Look');
+
+    const anonymous = createAuthedGraphQLClient({
+      endpoint: 'http://localhost/graphql',
+      getToken: () => null,
+      fetchImpl,
+    });
+    const err = await anonymous.request('{ room(id: "r-1") { name } }').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(GraphQLClientError);
+    expect((err as GraphQLClientError).code).toBe('UNAUTHENTICATED');
+    // 送っていないので監査も増えない (Look の 1 件のまま)
+    expect(reader.records()).toHaveLength(1);
   });
 });

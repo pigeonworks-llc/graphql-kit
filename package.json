@@ -2,12 +2,16 @@
   "name": "@pigeonworks-llc/graphql-kit",
   "version": "0.1.0",
   "private": true,
-  "description": "GraphQL の入口と断りの型 (HTTP gate / Refused union / 監査ログ plugin)",
+  "description": "GraphQL の入口・断りの型・呼び出し核 (HTTP gate / Refused union / 監査 plugin / client)",
   "type": "module",
   "engines": {
     "node": ">=24"
   },
   "exports": {
+    "./client": {
+      "types": "./dist/client/index.d.ts",
+      "import": "./dist/client/index.js"
+    },
     "./http-gate": {
       "types": "./dist/http-gate/index.d.ts",
       "import": "./dist/http-gate/index.js"
