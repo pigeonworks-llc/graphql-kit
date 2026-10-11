@@ -4,13 +4,18 @@
 > コードは自由に利用・改変・再配布できます。fork 時は名称 (graphql-kit) を変更してください (商標)。
 > (POL-OSS-001, 2026-07-24)
 
-GraphQL の面を作る時に毎回同じ判断を書き直さないための 3 つの部品。
+GraphQL の面を作る時に毎回同じ判断を書き直さないための 4 つの部品。
 
 | package | 何を固定するか | 出所 |
 |---|---|---|
 | `./http-gate` | `/graphql` の HTTP 入口 (POST のみ / Content-Type の限定 / 深さ・複雑さの上限) | 別々の案件で独立に同じ判断が出た |
 | `./refusal` | 断りは payload の union で返す (errors[] に出さない)。理由は閉じた列挙 | 複数案件で形が割れていたのを 1 つにする |
 | `./audit` | 実行された operation を一律に記録する yoga plugin (閲覧も記録する) | アクセスログ要件のある案件 |
+| `./client` | **呼ぶ側**の核 (POST + Bearer + `{data,errors}` の展開)。エラーは 1 型に統一 | 同じ POST 核が 7 repo で独立に書かれていた |
+
+`./client` だけは server 側と向きが逆で、`http-gate` / `refusal` が定めた規約を
+**client 側から守る**ために要る — 断りは payload (HTTP 200) なので throw にならない、
+gate が 400 / 415 を GraphQL の封筒で返した時は status と code の両方が残る、など。
 
 ## なぜ 3 つとも要るか
 
@@ -101,6 +106,48 @@ const yoga = createYoga({
 sink の実装は consumer 側の仕事: 追記専用のテーブル (UPDATE/DELETE を禁止する
 トリガー・権限) やロック付きバケット。`createEphemeralAudit()` は開発・テスト用で、
 プロセスが落ちれば消える。
+
+### client
+
+```ts
+import { graphqlRequest, createAuthedGraphQLClient, GraphQLClientError } from '@pigeonworks-llc/graphql-kit/client';
+
+// 1 回の POST
+const data = await graphqlRequest<{ me: { id: string } }>({
+  endpoint: 'https://api.example/graphql',
+  query: 'query { me { id } }',
+  token,                       // 省略すると無認証
+});
+
+// 「認証必須」を束ねる。endpoint を関数にすると動的 origin にも対応する
+const client = createAuthedGraphQLClient({
+  endpoint: () => `${getOrigin()}/graphql`,
+  getToken: async () => session.load(),
+});
+await client.request('mutation { ... }');
+```
+
+`GraphQLClientError` 1 型に寄せ、**`code` で分岐する** (文言では分岐しない)。
+`status` / `code` / `errors[]` をそのまま持つ:
+
+| 起きたこと | status | code |
+|---|---|---|
+| 非 2xx (transport) | 5xx / 4xx | — (封筒なら errors[0] の code) |
+| gate が 400 / 415 を封筒で返した | 400 / 415 | errors[0].extensions.code |
+| resolver が `errors[]` を返した (HTTP 200) | 200 | errors[0].extensions.code |
+| `data` も `errors` も無い | 200 | — |
+| token が無い (`createAuthedGraphQLClient`) | — | `UNAUTHENTICATED` |
+
+**fetch は注入する。** Cloudflare の Service Binding (`env.X.fetch(Request)`) は
+`fetchImpl` に包んで渡す — lib は Cloudflare を知らない。
+
+```ts
+fetchImpl: (url, init) => env.TENANT_API.fetch(new Request(url, init)),
+```
+
+**失敗を握り潰す caller は自分で包む。** event emitter のように「sink が落ちても
+本業は止めない」consumer は `try { await graphqlRequest(...) } catch { log(...) }` を
+書く。lib が握り潰すかどうかを決めると、握り潰しが既定になって気付けなくなる。
 
 ## 開発
 
