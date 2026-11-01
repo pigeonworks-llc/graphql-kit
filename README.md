@@ -4,7 +4,7 @@
 > コードは自由に利用・改変・再配布できます。fork 時は名称 (graphql-kit) を変更してください (商標)。
 > (POL-OSS-001, 2026-07-24)
 
-GraphQL の面を作る時に毎回同じ判断を書き直さないための 4 つの部品。
+GraphQL の面を作る時に毎回同じ判断を書き直さないための 5 つの部品。
 
 | package | 何を固定するか | 出所 |
 |---|---|---|
@@ -12,6 +12,7 @@ GraphQL の面を作る時に毎回同じ判断を書き直さないための 4 
 | `./refusal` | 断りは payload の union で返す (errors[] に出さない)。理由は閉じた列挙 | 複数案件で形が割れていたのを 1 つにする |
 | `./audit` | 実行された operation を一律に記録する yoga plugin (閲覧も記録する) | アクセスログ要件のある案件 |
 | `./client` | **呼ぶ側**の核 (POST + Bearer + `{data,errors}` の展開)。エラーは 1 型に統一 | 同じ POST 核が 7 repo で独立に書かれていた |
+| `./consumers` | repo の外の**使い手**を、その実 file から抜いた GraphQL で照合する核 (provider が使い手を守る) | 同じ核が aiq / dandori / plan7 で独立に書かれ、宛先の決め方がずれていた (2026-11-01) |
 
 `./client` だけは server 側と向きが逆で、`http-gate` / `refusal` が定めた規約を
 **client 側から守る**ために要る — 断りは payload (HTTP 200) なので throw にならない、
@@ -149,6 +150,46 @@ fetchImpl: (url, init) => env.TENANT_API.fetch(new Request(url, init)),
 本業は止めない」consumer は `try { await graphqlRequest(...) } catch { log(...) }` を
 書く。lib が握り潰すかどうかを決めると、握り潰しが既定になって気付けなくなる。
 
+### consumers
+
+**provider が使い手を守る**ための核。provider の CI が使い手の実 file を読み、中の
+GraphQL を抜き出して schema に validate する。型を変えた PR が、壊れる使い手だけを
+名指しで赤にする — 使い手側に schema の写しを置かない。
+
+```ts
+import { checkConsumerSource, type ConsumerSpec } from '@pigeonworks-llc/graphql-kit/consumers';
+
+const spec: ConsumerSpec = {
+  name: 'weekly-review',
+  where: 'owner/repo:path/to/file.py',
+  roots: ['nodes'],      // この使い手がこの provider で使う root field (宛先の宣言)
+  minOperations: 2,      // この provider 宛ての件数の下限
+};
+const errors = checkConsumerSource(spec, sourceText /* 読めなければ null */, schema);
+```
+
+**lib が持たないもの** (descriptor 注入 — 使い手側の関心):
+
+- 使い手の file をどこから読むか。各 repo は `git show origin/main:<path>` で読む
+  (作業ツリーは stale な checkout のことがある)。読む git には `GIT_*` を落とした env を
+  渡す — pre-push が `GIT_DIR` を渡すと別の repo を読む (2026-11-01 に実際に踏んだ)
+- 台帳の形式 (yaml / JSON) とその検証。lib は検証済みの `ConsumerSpec` を受け取る
+
+**宛先は宣言 (`roots`) で決める。query の中身から推さない。** 1 つの file が複数の
+provider を叩くので宛先を決める必要があるが、推すとどの規則も「捕まえたい誤り」で
+騙される (実測):
+
+| 推し方 | 起きること |
+|---|---|
+| root field の名前で推す | 名前が別 provider と重なると (例: `roadmap`) 偽の赤 |
+| 名前 + 引数で推す | 引数を間違えた document が「別 provider 宛て」と見なされ**黙って外れる** |
+
+宣言なら、宣言した root の引数・field の誤りは schema が赤にする。
+
+**抽出する器**: backtick / Python の三重引用符 / shell の単一引用符 (変数だけを後から
+組む `gql 'query(...){...}' "$vars"` の形)。shell の単一引用符は `query|mutation`
+始まりだけを拾う — JSON body (`'{"query":...}'`) を拾わないため。
+
 ## 開発
 
 ```bash
@@ -176,7 +217,8 @@ map の sources (`../../src/…`) は同梱されず、consumer 側では dead l
    対象 dir 不在は exit 2 (silent green を許さない)。
 3. **架空 fixture conformance** — `conformance/room-booking.test.ts`。会議室予約という
    実在製品と無関係な題材で 3 部品を組み合わせ、入口で弾く / 断りは payload /
-   全操作が監査に残る、を確かめる。
+   全操作が監査に残る、を確かめる。`./consumers` は `conformance/library-consumers.test.ts`
+   (図書館の貸出) で、field を改名すると読む使い手だけが名指しで赤になる、を確かめる。
 
 **手順: gate を先に red で書く。** この repo でもその順で作った — purity gate を
 先に走らせ、`src/` に残っていた出所のコメント (製品名) とドメイン語彙で red に
