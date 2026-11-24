@@ -1,7 +1,7 @@
 {
   "name": "@pigeonworks-llc/graphql-kit",
-  "version": "0.3.0",
-  "description": "GraphQL の入口・断りの型・呼び出し核・使い手の照合・鍵・登録した問い合わせ・回数の制限・操作ごとの権限・それらを並べた入口 (HTTP gate / Refused union / 監査 plugin / client / consumers / token / persisted / rate / authz / secure)",
+  "version": "0.4.0",
+  "description": "GraphQL の入口・断りの型・呼び出し核・使い手の照合・鍵・登録した問い合わせ・回数の制限・操作ごとの権限・それらを並べた入口・登録した操作を MCP / CLI の形にする表 (HTTP gate / Refused union / 監査 plugin / client / consumers / token / persisted / rate / authz / secure / tools)",
   "type": "module",
   "engines": {
     "node": ">=24"
@@ -46,6 +46,10 @@
     "./secure": {
       "types": "./dist/secure/index.d.ts",
       "import": "./dist/secure/index.js"
+    },
+    "./tools": {
+      "types": "./dist/tools/index.d.ts",
+      "import": "./dist/tools/index.js"
     }
   },
   "files": [

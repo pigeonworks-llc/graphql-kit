@@ -17,6 +17,7 @@ GraphQL の面を作る時に毎回同じ判断を書き直さないための 5 
 | `./rate` | 鍵ごとの回数の制限 (固定窓、cost、断った要求は数えない)。D1 と memory | 暴走した AI を 1 分で止める |
 | `./authz` | 操作ごとの権限 (`@auth(scopes:)` / `@public`、既定で閉じる) | 書き忘れた root field が誰にでも開く状態を作らない |
 | `./secure` | 上の部品を決まった順に並べた入口 `secureGraphqlHandler` | 並びの順 (鍵 → 登録 → 深さ → 回数 → 権限 → 実行) を面ごとに書き直さない |
+| `./tools` | 登録した操作 1 つ = MCP の tool / CLI のサブコマンド 1 つの表 (名前・説明・hash・入力の JSON Schema) | MCP の tool の定義を手で書き写さない (dandori の mcp-remote.ts は手書きだった) |
 | `./consumers` | repo の外の**使い手**を、その実 file から抜いた GraphQL で照合する核 (provider が使い手を守る) | 同じ核が aiq / dandori / plan7 で独立に書かれ、宛先の決め方がずれていた (2026-11-01) |
 
 `./client` だけは server 側と向きが逆で、`http-gate` / `refusal` が定めた規約を
@@ -176,6 +177,24 @@ export default { fetch: (req) => handle(req) };
 - 本文の任意の問い合わせは scope `ops:arbitrary` の鍵だけ (それでも深さ・回数・権限は見る)
 - resolver の context に `principal` (鍵の claims、鍵なしの `@public` 要求は null) が入る。監査の actor は `principal.sub`
 - 呼ぶ側は `graphqlRequest({ extensions: { persistedQuery: { version: 1, sha256Hash } }, omitQuery: true, token })`
+
+### tools
+
+```ts
+import { findRefused, operationTools } from '@pigeonworks-llc/graphql-kit/tools';
+
+const tools = operationTools(buildSchema(sdl), manifest);
+// [{ name: 'CreateRoom', description: '会議室を 1 件作る', hash, kind: 'mutation', inputSchema: { type: 'object', … } }]
+// MCP の tools/list にそのまま出し、tools/call は hash で呼ぶ:
+const data = await graphqlRequest({ endpoint, query: '', omitQuery: true, token, variables: args,
+  extensions: { persistedQuery: { version: 1, sha256Hash: tool.hash } } });
+const refused = findRefused(data);   // 業務の断り (HTTP 200) を isError / exit code にする
+```
+
+- 説明は操作の本文の先頭の `#` 行。**無い操作は tool にしない** (投げる。AI は説明で tool を選ぶ)
+- 入力は変数を schema で展開した JSON Schema (input object・enum・リスト・既定値)。`additionalProperties: false`
+- 表は実行時に台帳と schema から作る (写しを書かないので、操作を足しても表がずれない)
+- MCP の SDK には依存しない (この kit は graphql / yoga だけ)。stdio の殻は使う側 (gql-forge の生成物) が持つ
 
 ### refusal
 
