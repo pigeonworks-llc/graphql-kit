@@ -51,6 +51,16 @@ export interface GraphQLRequestInit {
     signal?: AbortSignal;
     /** テスト / 別ランタイム用の fetch 差し替え。既定は global fetch。 */
     fetchImpl?: FetchLike;
+    /**
+     * 要求の extensions。登録した問い合わせ (persisted) で呼ぶ時は
+     * `{ persistedQuery: { version: 1, sha256Hash } }` を渡す
+     */
+    extensions?: Record<string, unknown>;
+    /**
+     * true なら本文 (query) を送らず、extensions の hash だけで呼ぶ
+     * (登録外を本文で回らせない server では、本文を送ると PERSISTED_QUERY_ONLY で断られる)
+     */
+    omitQuery?: boolean;
 }
 /**
  * 1 回の GraphQL POST。`{data, errors}` を展開し、`data` を返す。

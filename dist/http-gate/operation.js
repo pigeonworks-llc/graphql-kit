@@ -65,7 +65,7 @@ export function measureOperation(query, operationName) {
 export function checkOperation(query, limits) {
     let measured;
     try {
-        measured = measureOperation(query);
+        measured = measureOperation(query, limits.operationName);
     }
     catch {
         return {

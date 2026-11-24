@@ -77,6 +77,16 @@ describe('measureOperation', () => {
 });
 
 describe('checkOperation', () => {
+  it('名前付きの操作が 2 つ以上ある文書は、operationName で選んだ操作を測る', () => {
+    const doc = 'query A { me { id } } query B { room { bookings { edges { node { id } } } } }';
+    expect(checkOperation(doc, LIMITS).allowed).toBe(false);
+    const a = checkOperation(doc, { ...LIMITS, operationName: 'A' });
+    expect(a).toMatchObject({ allowed: true, operationName: 'A', depth: 2 });
+    const b = checkOperation(doc, { maxDepth: 3, maxComplexity: 50, operationName: 'B' });
+    expect(b).toMatchObject({ allowed: false, reason: 'TOO_DEEP' });
+    expect(checkOperation(doc, { ...LIMITS, operationName: 'C' })).toMatchObject({ allowed: false, reason: 'INVALID_QUERY' });
+  });
+
   it('allows an operation inside the limits', () => {
     const d = checkOperation('{ store { name } }', LIMITS);
     expect(d.allowed).toBe(true);

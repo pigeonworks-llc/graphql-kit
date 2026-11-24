@@ -48,7 +48,7 @@ function joinMessages(errors) {
  *                      静かに undefined になる (silent failure)
  */
 export async function graphqlRequest(init) {
-    const { endpoint, query, variables, token, credentials, headers, onResponse, signal, fetchImpl, } = init;
+    const { endpoint, query, variables, token, credentials, headers, onResponse, signal, fetchImpl, extensions, omitQuery, } = init;
     const doFetch = fetchImpl ?? ((input, requestInit) => fetch(input, requestInit));
     const requestHeaders = { 'Content-Type': 'application/json' };
     if (token)
@@ -58,7 +58,7 @@ export async function graphqlRequest(init) {
     const requestInit = {
         method: 'POST',
         headers: requestHeaders,
-        body: JSON.stringify({ query, variables }),
+        body: JSON.stringify({ ...(omitQuery ? {} : { query }), variables, ...(extensions ? { extensions } : {}) }),
     };
     if (credentials)
         requestInit.credentials = credentials;
