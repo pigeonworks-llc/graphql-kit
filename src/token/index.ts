@@ -17,6 +17,8 @@
 // kind は鍵を使う者の種類 (human / ai / cli / device など、面が決める)。
 // 要求の body で名乗らせず、鍵に焼き込む。
 
+import type { D1Like } from '../d1.ts';
+
 export interface Claims {
   /** 主体。失効と監査の単位 */
   readonly sub: string;
@@ -195,15 +197,7 @@ export function memoryRevocationStore(): RevocationStore {
   };
 }
 
-/** D1 (と同じ形の SQLite) の最小の口。@cloudflare/workers-types に依らない */
-export interface D1Like {
-  prepare(sql: string): {
-    bind(...values: unknown[]): {
-      first<T>(): Promise<T | null>;
-      run(): Promise<unknown>;
-    };
-  };
-}
+export type { D1Like };
 
 /** 失効の表 (migration に足す)。1 主体 1 行 */
 export const REVOCATION_SCHEMA = `CREATE TABLE IF NOT EXISTS token_revocations (

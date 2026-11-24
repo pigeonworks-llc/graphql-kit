@@ -1,7 +1,7 @@
 {
   "name": "@pigeonworks-llc/graphql-kit",
   "version": "0.2.0",
-  "description": "GraphQL の入口・断りの型・呼び出し核・使い手の照合・鍵 (HTTP gate / Refused union / 監査 plugin / client / consumers / token)",
+  "description": "GraphQL の入口・断りの型・呼び出し核・使い手の照合・鍵・登録した問い合わせ・回数の制限 (HTTP gate / Refused union / 監査 plugin / client / consumers / token / persisted / rate)",
   "type": "module",
   "engines": {
     "node": ">=24"
@@ -30,6 +30,14 @@
     "./token": {
       "types": "./dist/token/index.d.ts",
       "import": "./dist/token/index.js"
+    },
+    "./persisted": {
+      "types": "./dist/persisted/index.d.ts",
+      "import": "./dist/persisted/index.js"
+    },
+    "./rate": {
+      "types": "./dist/rate/index.d.ts",
+      "import": "./dist/rate/index.js"
     }
   },
   "files": [

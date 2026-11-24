@@ -1,3 +1,4 @@
+import type { D1Like } from '../d1.ts';
 export interface Claims {
     /** 主体。失効と監査の単位 */
     readonly sub: string;
@@ -45,15 +46,7 @@ export interface RevocationStore {
 export declare function isRevoked(store: RevocationStore, claims: Claims): Promise<boolean>;
 /** 試験と、失効を持たなくてよい開発用 */
 export declare function memoryRevocationStore(): RevocationStore;
-/** D1 (と同じ形の SQLite) の最小の口。@cloudflare/workers-types に依らない */
-export interface D1Like {
-    prepare(sql: string): {
-        bind(...values: unknown[]): {
-            first<T>(): Promise<T | null>;
-            run(): Promise<unknown>;
-        };
-    };
-}
+export type { D1Like };
 /** 失効の表 (migration に足す)。1 主体 1 行 */
 export declare const REVOCATION_SCHEMA = "CREATE TABLE IF NOT EXISTS token_revocations (\n  sub TEXT PRIMARY KEY,\n  revoked_before INTEGER NOT NULL\n);";
 export declare function d1RevocationStore(db: D1Like): RevocationStore;

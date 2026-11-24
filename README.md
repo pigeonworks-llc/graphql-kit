@@ -13,6 +13,8 @@ GraphQL の面を作る時に毎回同じ判断を書き直さないための 5 
 | `./audit` | 実行された operation を一律に記録する yoga plugin (閲覧も記録する) | アクセスログ要件のある案件 |
 | `./client` | **呼ぶ側**の核 (POST + Bearer + `{data,errors}` の展開)。エラーは 1 型に統一 | 同じ POST 核が 7 repo で独立に書かれていた |
 | `./token` | 鍵の発行と検査 (HMAC、期限必須、主体ごとの失効、scope を焼き込む) | 同じ形の鍵が 3 repo で別々に書かれていた |
+| `./persisted` | 登録した問い合わせ (hash) だけを通す yoga plugin と台帳の作成・検査 | 任意の問い合わせで大量に引き出す・schema を探るのを塞ぐ。MCP の tool = 1 つの登録した操作 |
+| `./rate` | 鍵ごとの回数の制限 (固定窓、cost、断った要求は数えない)。D1 と memory | 暴走した AI を 1 分で止める |
 | `./consumers` | repo の外の**使い手**を、その実 file から抜いた GraphQL で照合する核 (provider が使い手を守る) | 同じ核が aiq / dandori / plan7 で独立に書かれ、宛先の決め方がずれていた (2026-11-01) |
 
 `./client` だけは server 側と向きが逆で、`http-gate` / `refusal` が定めた規約を
@@ -83,6 +85,42 @@ if (!claims || (await isRevoked(d1RevocationStore(env.DB), claims))) return new 
 - pepper は 32 bytes 以上 (足りなければ発行は投げ、検証は全部拒む)。base64url は正規形だけ
 - 検証の失敗理由は返さない (`null` だけ)
 - `scopes` は鍵が許すことを列べるだけ。**どの操作に何の scope が要るかは面の側** (schema) が決める
+
+### persisted
+
+```ts
+import { buildManifest, persistedPlugin, validateManifest } from '@pigeonworks-llc/graphql-kit/persisted';
+
+// ビルド時 (script): operations/*.graphql を読んで台帳 (JSON) にし、schema に通るかを ci で見る
+const manifest = await buildManifest(documents);          // 名前付きの操作 1 つの文書だけ
+const problems = validateManifest(buildSchema(sdl), manifest);
+
+// 実行時 (Worker): JSON を import して plugin に渡す (fs を使わない)
+createYoga({ schema, plugins: [persistedPlugin({ manifest, allowArbitrary: (req) => isDevKey(req) })] });
+```
+
+呼ぶ側は本文でなく `extensions.persistedQuery: { version: 1, sha256Hash }` を送る (Apollo APQ と同じ封筒)。
+
+- 登録の無い hash → `PERSISTED_QUERY_NOT_FOUND`。本文の任意の問い合わせ → `PERSISTED_QUERY_ONLY` (どちらも実行しない)
+- **登録は自動にしない**。台帳と同じ本文を送っても hash が無ければ任意の問い合わせとして扱う
+- hash と本文を両方送ったら hash の本文で実行する (送られた本文で差し替えさせない)
+- 任意の問い合わせを開けるのは `allowArbitrary` が許した要求だけ (既定は誰も通さない)
+- yoga 公式の persisted-operations plugin は最新版が yoga 6 を要求するため使わず、`onParams` の 1 hook で書いた
+
+### rate
+
+```ts
+import { d1RateStore, rateFrom } from '@pigeonworks-llc/graphql-kit/rate';
+
+const limit = rateFrom(env.RATE_LIMIT_PER_MIN, { windowSeconds: 60, perWindow: 300 }); // null = 数えない
+const spent = limit && (await d1RateStore(env.DB).spend(claims.sub, cost, limit, Math.floor(Date.now() / 1000)));
+if (spent && !spent.ok) return refuse('RATE_LIMITED', { retryAfterSeconds: spent.retryAfterSeconds });
+```
+
+- 数える単位は「窓の始まりと使った数」だけ。**断った要求は数を使わない** (待てば通る)
+- 時計が窓の始まりより前に戻ったら数え直す。cost で重い問い合わせを多く数える
+- D1 版は 1 文の UPSERT + RETURNING で数え、超えたら戻す (読んでから書く間に別の要求が入れない形)。`RATE_SCHEMA` を migration に足す
+- 数を Worker のメモリに置かない (isolate が入れ替わるたびに黙って無制限に戻る)。memory 版は試験用
 
 ### refusal
 
