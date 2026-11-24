@@ -12,6 +12,7 @@ GraphQL の面を作る時に毎回同じ判断を書き直さないための 5 
 | `./refusal` | 断りは payload の union で返す (errors[] に出さない)。理由は閉じた列挙 | 複数案件で形が割れていたのを 1 つにする |
 | `./audit` | 実行された operation を一律に記録する yoga plugin (閲覧も記録する) | アクセスログ要件のある案件 |
 | `./client` | **呼ぶ側**の核 (POST + Bearer + `{data,errors}` の展開)。エラーは 1 型に統一 | 同じ POST 核が 7 repo で独立に書かれていた |
+| `./token` | 鍵の発行と検査 (HMAC、期限必須、主体ごとの失効、scope を焼き込む) | 同じ形の鍵が 3 repo で別々に書かれていた |
 | `./consumers` | repo の外の**使い手**を、その実 file から抜いた GraphQL で照合する核 (provider が使い手を守る) | 同じ核が aiq / dandori / plan7 で独立に書かれ、宛先の決め方がずれていた (2026-11-01) |
 
 `./client` だけは server 側と向きが逆で、`http-gate` / `refusal` が定めた規約を
@@ -55,6 +56,33 @@ if (badType) return new Response(badType.message, { status: badType.status });
 
 depth の数え方は graphql-depth-limit と同じ (`{ me { id } }` = 2)。fragment は
 段数を増やさない。壊れた文書 (fragment の循環) でも停止する。
+
+### token
+
+```ts
+import { bearer, d1RevocationStore, isRevoked, mintToken, verifyToken } from '@pigeonworks-llc/graphql-kit/token';
+
+// 発行 (手元の script。pepper は sops から env で渡し、表示しない)
+const { token } = await mintToken({
+  prefix: 'rooms', pepper: env.TOKEN_PEPPER, sub: 'cli-1', scopes: ['rooms:read'], kind: 'cli', ttlDays: 90,
+});
+
+// 検査 (Worker の入口)
+const raw = bearer(request);
+const claims = raw && (await verifyToken(raw, { prefix: 'rooms', pepper: env.TOKEN_PEPPER }));
+if (!claims || (await isRevoked(d1RevocationStore(env.DB), claims))) return new Response('', { status: 401 });
+```
+
+形は `<prefix>.v1.<payload>.<sig>`。決めてあること:
+
+- **prefix は面ごと**。pepper を共有していても、別の面で出した鍵は通らない
+- **期限は必須** (既定 90 日・最長 365 日)。期限の無い鍵は出さない
+- **失効は主体 (`sub`) ごとの世代**。`revoke(sub)` より前に出た鍵を拒む (`REVOCATION_SCHEMA` を migration に足す)。
+  全失効は pepper を回す
+- **未来に出た鍵は受けない** (60 秒まで)。iat を先に名乗って失効を生き延びるのを防ぐ
+- pepper は 32 bytes 以上 (足りなければ発行は投げ、検証は全部拒む)。base64url は正規形だけ
+- 検証の失敗理由は返さない (`null` だけ)
+- `scopes` は鍵が許すことを列べるだけ。**どの操作に何の scope が要るかは面の側** (schema) が決める
 
 ### refusal
 
