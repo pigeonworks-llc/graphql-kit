@@ -76,6 +76,16 @@ export interface GraphQLRequestInit {
   signal?: AbortSignal;
   /** テスト / 別ランタイム用の fetch 差し替え。既定は global fetch。 */
   fetchImpl?: FetchLike;
+  /**
+   * 要求の extensions。登録した問い合わせ (persisted) で呼ぶ時は
+   * `{ persistedQuery: { version: 1, sha256Hash } }` を渡す
+   */
+  extensions?: Record<string, unknown>;
+  /**
+   * true なら本文 (query) を送らず、extensions の hash だけで呼ぶ
+   * (登録外を本文で回らせない server では、本文を送ると PERSISTED_QUERY_ONLY で断られる)
+   */
+  omitQuery?: boolean;
 }
 
 /** `errors[]` を 1 つの message にする。2 件目以降も残す (最初の 1 件で捨てない)。 */
@@ -106,6 +116,8 @@ export async function graphqlRequest<T>(init: GraphQLRequestInit): Promise<T> {
     onResponse,
     signal,
     fetchImpl,
+    extensions,
+    omitQuery,
   } = init;
   const doFetch: FetchLike = fetchImpl ?? ((input, requestInit) => fetch(input, requestInit));
 
@@ -116,7 +128,7 @@ export async function graphqlRequest<T>(init: GraphQLRequestInit): Promise<T> {
   const requestInit: RequestInit = {
     method: 'POST',
     headers: requestHeaders,
-    body: JSON.stringify({ query, variables }),
+    body: JSON.stringify({ ...(omitQuery ? {} : { query }), variables, ...(extensions ? { extensions } : {}) }),
   };
   if (credentials) requestInit.credentials = credentials;
   if (signal) requestInit.signal = signal;

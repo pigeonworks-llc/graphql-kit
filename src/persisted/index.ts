@@ -72,9 +72,19 @@ export interface PersistedPluginOptions {
   readonly allowArbitrary?: (request: Request) => boolean | Promise<boolean>;
 }
 
-const refuse = (code: string, message: string) => ({
-  errors: [new GraphQLError(message, { extensions: { code } })],
-});
+/** 要求の本文 (GraphQL over HTTP の JSON) */
+export interface GraphqlParams {
+  readonly query?: unknown;
+  readonly operationName?: unknown;
+  readonly variables?: unknown;
+  readonly extensions?: unknown;
+}
+
+export type PersistedRejection = 'PERSISTED_QUERY_NOT_FOUND' | 'PERSISTED_QUERY_ONLY';
+
+export type PersistedResolution =
+  | { readonly ok: true; readonly query: string; readonly operationName: string | undefined; readonly persisted: boolean }
+  | { readonly ok: false; readonly code: PersistedRejection; readonly message: string };
 
 function persistedHash(extensions: unknown): string | null | undefined {
   if (typeof extensions !== 'object' || extensions === null) return undefined;
@@ -83,6 +93,35 @@ function persistedHash(extensions: unknown): string | null | undefined {
   if (typeof pq !== 'object' || pq === null) return null;
   const { version, sha256Hash } = pq as Record<string, unknown>;
   return version === 1 && typeof sha256Hash === 'string' && HASH_RE.test(sha256Hash) ? sha256Hash : null;
+}
+
+/**
+ * 要求の本文から、実行する本文を決める (yoga に渡す前に、深さや権限を本文で見るため)。
+ * hash があれば台帳の本文 (送られた本文は使わない)。無ければ arbitrary が許す時だけ送られた本文
+ */
+export function resolvePersisted(
+  params: GraphqlParams,
+  manifest: PersistedManifest,
+  arbitrary: boolean,
+): PersistedResolution {
+  const hash = persistedHash(params.extensions);
+  if (hash !== undefined) {
+    const entry = hash === null ? undefined : manifest[hash];
+    if (!entry) return { ok: false, code: 'PERSISTED_QUERY_NOT_FOUND', message: '登録されていない操作です' };
+    return { ok: true, query: entry.document, operationName: entry.name, persisted: true };
+  }
+  if (!arbitrary) {
+    return {
+      ok: false,
+      code: 'PERSISTED_QUERY_ONLY',
+      message: '登録した操作だけを受けます (extensions.persistedQuery.sha256Hash)',
+    };
+  }
+  if (typeof params.query !== 'string') {
+    return { ok: false, code: 'PERSISTED_QUERY_ONLY', message: '本文 (query) が要ります' };
+  }
+  const operationName = typeof params.operationName === 'string' ? params.operationName : undefined;
+  return { ok: true, query: params.query, operationName, persisted: false };
 }
 
 /**
@@ -95,22 +134,15 @@ const REFUSED_PLACEHOLDER = '{ __typename }';
 export function persistedPlugin(options: PersistedPluginOptions): Plugin {
   return {
     async onParams({ params, request, setParams, setResult }) {
-      const deny = (code: string, message: string) => {
+      const hasHash = persistedHash(params.extensions) !== undefined;
+      const arbitrary = !hasHash && options.allowArbitrary !== undefined && (await options.allowArbitrary(request));
+      const r = resolvePersisted(params, options.manifest, arbitrary);
+      if (!r.ok) {
         setParams({ query: REFUSED_PLACEHOLDER });
-        setResult(refuse(code, message));
-      };
-      const hash = persistedHash(params.extensions);
-      if (hash !== undefined) {
-        const entry = hash === null ? undefined : options.manifest[hash];
-        if (!entry) {
-          deny('PERSISTED_QUERY_NOT_FOUND', '登録されていない操作です');
-          return;
-        }
-        setParams({ ...params, query: entry.document, operationName: entry.name });
+        setResult({ errors: [new GraphQLError(r.message, { extensions: { code: r.code } })] });
         return;
       }
-      if (options.allowArbitrary && (await options.allowArbitrary(request))) return;
-      deny('PERSISTED_QUERY_ONLY', '登録した操作だけを受けます (extensions.persistedQuery.sha256Hash)');
+      if (r.persisted) setParams({ ...params, query: r.query, operationName: r.operationName });
     },
   };
 }

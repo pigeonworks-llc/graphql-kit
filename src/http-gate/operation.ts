@@ -9,6 +9,11 @@ import { parse, type DocumentNode, type OperationDefinitionNode, type SelectionS
 export interface OperationLimits {
   maxDepth: number;
   maxComplexity: number;
+  /**
+   * 実行する操作の名前 (要求の operationName)。名前付きの操作が 2 つ以上ある文書は、
+   * これが無いと実行する操作が決まらないので INVALID_QUERY になる
+   */
+  operationName?: string;
 }
 
 export interface OperationMeasurement {
@@ -95,7 +100,7 @@ export function measureOperation(query: string, operationName?: string): Operati
 export function checkOperation(query: string, limits: OperationLimits): OperationDecision {
   let measured: OperationMeasurement;
   try {
-    measured = measureOperation(query);
+    measured = measureOperation(query, limits.operationName);
   } catch {
     return {
       allowed: false,

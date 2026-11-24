@@ -3,7 +3,14 @@ import { buildSchema } from 'graphql';
 import { createYoga } from 'graphql-yoga';
 import { describe, expect, it } from 'vitest';
 
-import { buildManifest, persistedPlugin, sha256Hex, validateManifest, type PersistedManifest } from './index.ts';
+import {
+  buildManifest,
+  persistedPlugin,
+  resolvePersisted,
+  sha256Hex,
+  validateManifest,
+  type PersistedManifest,
+} from './index.ts';
 
 const sdl = `type Query { room(id: ID!): Room  rooms: [Room!]! }  type Room { id: ID!  name: String! }`;
 // yoga と同じ graphql を使う (vitest の ESM と yoga の CJS で別の graphql を読むのを避ける。audit の試験と同じ)
@@ -110,5 +117,30 @@ describe('persistedPlugin', () => {
         'PERSISTED_QUERY_NOT_FOUND',
       );
     }
+  });
+});
+
+describe('resolvePersisted (yoga の手前で本文を決める)', () => {
+  it('hash は台帳の本文と名前に差し替え、任意の本文は許した時だけ通す', async () => {
+    const m = await buildManifest([ROOM]);
+    const h = await sha256Hex(ROOM);
+    expect(resolvePersisted({ query: 'x', extensions: { persistedQuery: { version: 1, sha256Hash: h } } }, m, false)).toEqual({
+      ok: true,
+      query: ROOM,
+      operationName: 'Room',
+      persisted: true,
+    });
+    expect(resolvePersisted({ query: ROOMS }, m, false)).toMatchObject({ ok: false, code: 'PERSISTED_QUERY_ONLY' });
+    expect(resolvePersisted({ query: ROOMS, operationName: 'Rooms' }, m, true)).toEqual({
+      ok: true,
+      query: ROOMS,
+      operationName: 'Rooms',
+      persisted: false,
+    });
+    expect(resolvePersisted({}, m, true)).toMatchObject({ ok: false, code: 'PERSISTED_QUERY_ONLY' });
+    expect(resolvePersisted({ extensions: { persistedQuery: { version: 1, sha256Hash: 'b'.repeat(64) } } }, m, true)).toMatchObject({
+      ok: false,
+      code: 'PERSISTED_QUERY_NOT_FOUND',
+    });
   });
 });

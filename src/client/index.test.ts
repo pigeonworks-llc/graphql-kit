@@ -277,3 +277,18 @@ describe('createAuthedGraphQLClient', () => {
     expect((calls[0]?.init?.headers as Record<string, string>)['Authorization']).toBeUndefined();
   });
 });
+
+describe('graphqlRequest の extensions (登録した問い合わせで呼ぶ)', () => {
+  it('extensions を送り、omitQuery なら本文を送らない', async () => {
+    const bodies: unknown[] = [];
+    const fetchImpl = async (_url: string, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return new Response(JSON.stringify({ data: { ok: true } }), { headers: { 'content-type': 'application/json' } });
+    };
+    const ext = { persistedQuery: { version: 1, sha256Hash: 'a'.repeat(64) } };
+    await graphqlRequest({ endpoint: 'https://x/graphql', query: 'query Q { ok }', extensions: ext, omitQuery: true, fetchImpl });
+    await graphqlRequest({ endpoint: 'https://x/graphql', query: 'query Q { ok }', fetchImpl });
+    expect(bodies).toEqual([{ extensions: ext }, { query: 'query Q { ok }' }]);
+  });
+});
+

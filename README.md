@@ -15,6 +15,8 @@ GraphQL の面を作る時に毎回同じ判断を書き直さないための 5 
 | `./token` | 鍵の発行と検査 (HMAC、期限必須、主体ごとの失効、scope を焼き込む) | 同じ形の鍵が 3 repo で別々に書かれていた |
 | `./persisted` | 登録した問い合わせ (hash) だけを通す yoga plugin と台帳の作成・検査 | 任意の問い合わせで大量に引き出す・schema を探るのを塞ぐ。MCP の tool = 1 つの登録した操作 |
 | `./rate` | 鍵ごとの回数の制限 (固定窓、cost、断った要求は数えない)。D1 と memory | 暴走した AI を 1 分で止める |
+| `./authz` | 操作ごとの権限 (`@auth(scopes:)` / `@public`、既定で閉じる) | 書き忘れた root field が誰にでも開く状態を作らない |
+| `./secure` | 上の部品を決まった順に並べた入口 `secureGraphqlHandler` | 並びの順 (鍵 → 登録 → 深さ → 回数 → 権限 → 実行) を面ごとに書き直さない |
 | `./consumers` | repo の外の**使い手**を、その実 file から抜いた GraphQL で照合する核 (provider が使い手を守る) | 同じ核が aiq / dandori / plan7 で独立に書かれ、宛先の決め方がずれていた (2026-11-01) |
 
 `./client` だけは server 側と向きが逆で、`http-gate` / `refusal` が定めた規約を
@@ -121,6 +123,59 @@ if (spent && !spent.ok) return refuse('RATE_LIMITED', { retryAfterSeconds: spent
 - 時計が窓の始まりより前に戻ったら数え直す。cost で重い問い合わせを多く数える
 - D1 版は 1 文の UPSERT + RETURNING で数え、超えたら戻す (読んでから書く間に別の要求が入れない形)。`RATE_SCHEMA` を migration に足す
 - 数を Worker のメモリに置かない (isolate が入れ替わるたびに黙って無制限に戻る)。memory 版は試験用
+
+### authz
+
+```graphql
+type Query    { rooms: [Room!]! @auth(scopes: ["rooms:read"])   health: String @public }
+type Mutation { bookRoom(id: ID!): BookRoomPayload! @auth(scopes: ["rooms:write"]) }
+```
+
+```ts
+import { assertAuthzTable, authorize, authzSdl, scopesOf } from '@pigeonworks-llc/graphql-kit/authz';
+
+const table = scopesOf(schema);   // { fields: { 'Query.rooms': ['rooms:read'], ... }, missing: [...] }
+assertAuthzTable(table);          // @auth も @public も無い root field があれば起動を止める
+authorize(document, operationName, claims.scopes, table); // { ok } / { ok: false, denied: [{ field, missing }] }
+```
+
+- **既定で閉じる**。見るのは root field だけ (行ごとの可否は resolver が決める)
+- 1 つの文書に許されない root field が 1 つでもあれば全体を拒む (alias・fragment の中も数える)
+- introspection (`__schema` / `__type`) は scope `schema:read` が要る。`__typename` は誰でもよい
+- 権限の断りは**入口の断り** (HTTP 403 + `extensions.code = PERMISSION_DENIED`)。業務の断り (Refused payload) とは別
+
+### secure
+
+```ts
+import { secureGraphqlHandler } from '@pigeonworks-llc/graphql-kit/secure';
+import manifest from './persisted.json';
+
+const handle = secureGraphqlHandler({
+  schema, prefix: 'rooms', pepper: env.TOKEN_PEPPER,
+  revocations: d1RevocationStore(env.DB), rate: d1RateStore(env.DB),
+  rateLimit: rateFrom(env.RATE_LIMIT_PER_MIN, { windowSeconds: 60, perWindow: 300 }),
+  manifest, limits: { maxDepth: 6, maxComplexity: 200 }, sink,
+  context: () => ({ env }),
+});
+export default { fetch: (req) => handle(req) };
+```
+
+並びの順と断り (入口の断りは HTTP status + `errors[0].extensions.code`):
+
+| 段 | 断り |
+|---|---|
+| 1. 入口 (POST / Content-Type) | 405 / 415 |
+| 2. 鍵 (検証 + 失効) | 401 `UNAUTHENTICATED` (`@public` だけの要求は鍵なしで通す) |
+| 3. 登録した問い合わせ | 400 `PERSISTED_QUERY_NOT_FOUND` / `PERSISTED_QUERY_ONLY` / `BAD_REQUEST` |
+| 4. 深さ・複雑さ | 400 `TOO_DEEP` / `TOO_COMPLEX` / `INVALID_QUERY` |
+| 5. 回数 (cost = 複雑さ。鍵があれば主体、無ければ接続元) | 429 `RATE_LIMITED` + `Retry-After` |
+| 6. 権限 | 403 `PERMISSION_DENIED` (監査に `denied …` で 1 行残す) |
+| 7. 実行 (yoga, `batching: false`, `maskedErrors`) | 業務の断りは resolver の Refused payload |
+
+- 鍵の無い要求は回数を使わない (誰でも他人の窓を埋められない)。権限・登録で落ちた要求は resolver に届かない
+- 本文の任意の問い合わせは scope `ops:arbitrary` の鍵だけ (それでも深さ・回数・権限は見る)
+- resolver の context に `principal` (鍵の claims、鍵なしの `@public` 要求は null) が入る。監査の actor は `principal.sub`
+- 呼ぶ側は `graphqlRequest({ extensions: { persistedQuery: { version: 1, sha256Hash } }, omitQuery: true, token })`
 
 ### refusal
 

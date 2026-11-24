@@ -19,4 +19,27 @@ export interface PersistedPluginOptions {
      */
     readonly allowArbitrary?: (request: Request) => boolean | Promise<boolean>;
 }
+/** 要求の本文 (GraphQL over HTTP の JSON) */
+export interface GraphqlParams {
+    readonly query?: unknown;
+    readonly operationName?: unknown;
+    readonly variables?: unknown;
+    readonly extensions?: unknown;
+}
+export type PersistedRejection = 'PERSISTED_QUERY_NOT_FOUND' | 'PERSISTED_QUERY_ONLY';
+export type PersistedResolution = {
+    readonly ok: true;
+    readonly query: string;
+    readonly operationName: string | undefined;
+    readonly persisted: boolean;
+} | {
+    readonly ok: false;
+    readonly code: PersistedRejection;
+    readonly message: string;
+};
+/**
+ * 要求の本文から、実行する本文を決める (yoga に渡す前に、深さや権限を本文で見るため)。
+ * hash があれば台帳の本文 (送られた本文は使わない)。無ければ arbitrary が許す時だけ送られた本文
+ */
+export declare function resolvePersisted(params: GraphqlParams, manifest: PersistedManifest, arbitrary: boolean): PersistedResolution;
 export declare function persistedPlugin(options: PersistedPluginOptions): Plugin;
